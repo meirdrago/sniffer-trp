@@ -23,6 +23,9 @@ impl RtpHeader {
         let b0 = packet[0];
         let b1 = packet[1];
         let version = (b0 >> 6) & 0x03;
+        if version != 2 {
+            return None;
+        }
         let padding = ((b0 >> 5) & 0x01) != 0;
         let extension = ((b0 >> 4) & 0x01) != 0;
         let csrc_count = b0 & 0x0f;

@@ -25,7 +25,7 @@ fn handle_udp_packet(interface_name: &str, source: IpAddr, destination: IpAddr, 
     let udp = UdpPacket::new(packet);
 
     if let Some(udp) = udp {
-        if let Some(rtp) = RtpPacket::new(packet){
+        if let Some(rtp) = RtpPacket::new(&packet[8..]){ // UDP header is 8 bytes
             println!("[udp]: {}:{} -> {}:{}", source, udp.get_source(), destination, udp.get_destination());  
             println!("{:?}", rtp.header);
 
@@ -35,8 +35,12 @@ fn handle_udp_packet(interface_name: &str, source: IpAddr, destination: IpAddr, 
 
 fn handle_tcp_packet(interface_name: &str, source: IpAddr, destination: IpAddr, packet: &[u8]) {
     let tcp = TcpPacket::new(packet);
-    if let Some(tcp) = tcp {      
-        if let Some(rtp) = RtpPacket::new(packet){
+    if let Some(tcp) = tcp { 
+        let magic_numeric = 0x24; // RTP over TCP magic number
+        if packet.len() < 4 || packet[0] != magic_numeric {
+            return; 
+        }     
+        if let Some(rtp) = RtpPacket::new(&packet[4..]){ // TCP header is variable, but RTP over TCP usually uses 4-byte length prefix
                 println!("[tcp]: {}:{} -> {}:{}", source, tcp.get_source(), destination, tcp.get_destination());  
                 println!("{:?}", rtp.header);
 
