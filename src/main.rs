@@ -2,7 +2,6 @@ extern crate pnet;
 
 mod rtp_packet;
 use crate::rtp_packet::{RtpHeader, RtpPacket};
-
 use pnet::datalink::{self, NetworkInterface};
 
 use pnet::packet::arp::ArpPacket;
@@ -27,40 +26,22 @@ fn handle_udp_packet(interface_name: &str, source: IpAddr, destination: IpAddr, 
 
     if let Some(udp) = udp {
         if let Some(rtp) = RtpPacket::new(packet){
-            println!(
-                "[udp-rtp]:  VER={}  IP={}:{} Seq={} Timestamp={} SSRC={:08X} Payload Length={}",
-                rtp.header.version,
-                source,
-                udp.get_source(),
-                rtp.header.sequence_number,
-                rtp.header.timestamp,
-                rtp.header.ssrc,
-                rtp.payload.len()
-            );
+            println!("[udp]: {}:{} -> {}:{}", source, udp.get_source(), destination, udp.get_destination());  
+            println!("{:?}", rtp.header);
+
         }
-    } else {
-        println!("[{}]: Malformed UDP Packet", interface_name);
     }
 }
 
 fn handle_tcp_packet(interface_name: &str, source: IpAddr, destination: IpAddr, packet: &[u8]) {
     let tcp = TcpPacket::new(packet);
-    if let Some(tcp) = tcp {        
+    if let Some(tcp) = tcp {      
         if let Some(rtp) = RtpPacket::new(packet){
-            println!(
-                "[tcp-rtp]:  VER={}   IP={}:{} Seq={} Timestamp={} SSRC={:08X} Payload Length={}",
-                rtp.header.version,
-                source,
-                tcp.get_source(),
-                rtp.header.sequence_number,
-                rtp.header.timestamp,
-                rtp.header.ssrc,
-                rtp.payload.len()
-            );
+                println!("[tcp]: {}:{} -> {}:{}", source, tcp.get_source(), destination, tcp.get_destination());  
+                println!("{:?}", rtp.header);
+
         }
-    } else {
-        println!("[{}]: Malformed TCP Packet", interface_name);
-    }
+    } 
 }
 
 fn handle_transport_protocol(
