@@ -1,7 +1,9 @@
 extern crate pnet;
 
 mod rtp_packet;
+mod
 use crate::rtp_packet::{RtpHeader, RtpPacket};
+use crate::rtp_stats::{RtpInfo, RtpStats};
 use pnet::datalink::{self, NetworkInterface};
 
 use pnet::packet::arp::ArpPacket;
@@ -23,6 +25,10 @@ use std::io::{self, Write};
 use std::net::IpAddr;
 use std::process;
 use std::collections::HashMap;
+
+
+const CLEAR_CODE: &str = "\x1B[2J"; 
+const MOVE_TO_TOP_LEFT: &str = "\x1B[H";
 
 
 fn get_interface_ips() -> HashMap<String, IpAddr> {
@@ -142,7 +148,6 @@ fn main() {
     };
     
     let interface_names_match = |iface: &NetworkInterface| iface.name == iface_name;
-
 
     // Find the network interface with the provided name
     let interfaces = datalink::interfaces();
