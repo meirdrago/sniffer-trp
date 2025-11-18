@@ -61,7 +61,7 @@ Impl RtpStats {
         entry.payload_bytes += payload_size as u64;
     }
 
-    pub fn print_and_empty(&mut self) { // TODO
+    pub fn print_and_empty(&mut self) {
         use prettytable::{Table, row, cell};
 
         let mut table = Table::new();
