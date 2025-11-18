@@ -1,5 +1,4 @@
 // Simple RTP packet header and packet parser utilities
-// Kept minimal and `pub` so `main.rs` can use them.
 
 #[derive(Debug, Clone)]
 pub struct RtpHeader {

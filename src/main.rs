@@ -16,10 +16,33 @@ use pnet::packet::udp::UdpPacket;
 use pnet::packet::Packet;
 use pnet::util::MacAddr;
 
+#[macro_use] extern crate prettytable;
+
 use std::env;
 use std::io::{self, Write};
 use std::net::IpAddr;
 use std::process;
+use std::collections::HashMap;
+
+
+fn get_interface_ips() -> HashMap<String, IpAddr> {
+    let interfaces = datalink::interfaces();
+
+    let interface_ip_map: HashMap<String, IpAddr> = interfaces
+        .into_iter() 
+        .filter_map(|iface| {
+            let name = iface.name;
+            if !iface.ips.is_empty() {
+                let first_ip = iface.ips[0].ip(); 
+                Some((name, first_ip))
+            } else {
+                None
+            }
+        })
+        .collect();
+        interface_ip_map
+}
+
 
 fn handle_udp_packet(interface_name: &str, source: IpAddr, destination: IpAddr, packet: &[u8]) {
     let udp = UdpPacket::new(packet);
@@ -91,17 +114,35 @@ fn handle_ethernet_frame(interface: &NetworkInterface, ethernet: &EthernetPacket
     }
 }
 
+fn print_usage_and_exit() {
+    let interfaces = get_interface_ips();
+    writeln!(io::stderr(), "USAGE: sniff-rtp <NETWORK INTERFACE>").unwrap();
+    println!("Available interfaces and their IP addresses:");
+    let ifaces_vec: Vec<Vec<String>> = interfaces
+            .iter()
+            .map(|(name, ip)| vec![name.clone(), ip.to_string()])
+            .collect();
+    let mut table = prettytable::Table::new();
+    table.add_row(row![FYb => "Interface", "IP Address"]);
+    for iface in ifaces_vec {
+        table.add_row(row![iface[0], iface[1]]);
+    }
+    table.printstd();
+}       
+
 fn main() {
     use pnet::datalink::Channel::Ethernet;
 
     let iface_name = match env::args().nth(1) {
         Some(n) => n,
         None => {
-            writeln!(io::stderr(), "USAGE: packetdump <NETWORK INTERFACE>").unwrap();
+            print_usage_and_exit();
             process::exit(1);
         }
     };
+    
     let interface_names_match = |iface: &NetworkInterface| iface.name == iface_name;
+
 
     // Find the network interface with the provided name
     let interfaces = datalink::interfaces();
