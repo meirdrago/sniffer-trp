@@ -64,16 +64,22 @@ impl RtpStats {
         });
 
         // Update stats
-        if sequence_number - entry.last_sequence > 1 {
-            entry.missed_packets += (sequence_number - entry.last_sequence - 1) as u64;
+        let seq_diff: i64 = sequence_number as i64 - entry.last_sequence as i64;
+        if seq_diff < -1000 { // new sequence counter wrapped around
+            entry.last_sequence = sequence_number;
+           
+        } else if seq_diff > 1 {
+            entry.missed_packets += (seq_diff - 1) as u64;
         }
         entry.last_sequence = sequence_number;
         entry.packet_count += 1;
         entry.payload_bytes += payload_size as u64;
+        entry.timestamp = Utc::now();
     }
 
     pub fn print(&mut self) {
-
+        let mut sorted_records: Vec<RtpInfo> = self.db.values().cloned().collect();
+        sorted_records.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
 
         let mut table = Table::new();
         table.add_row(Row::new(vec![
@@ -86,7 +92,7 @@ impl RtpStats {
             Cell::new("Last Packet Time").style_spec("FYb"),  
         ]));
 
-        for (_key, info) in self.db.iter() {
+        for info in sorted_records {
             let protocol_str = match info.protocol {
                 1 => "UDP",
                 2 => "TCP",
@@ -106,6 +112,13 @@ impl RtpStats {
         // Clear terminal and print table
         print!("{}{}", CLEAR_CODE, MOVE_TO_TOP_LEFT);
         table.printstd();
+    }
+
+    pub fn clean_old_entries(&mut self, secs: usize) {
+        let now = Utc::now();
+        self.db.retain(|_, info| {
+            (now - info.timestamp).num_seconds() < secs as i64
+        });
     }
 }
 

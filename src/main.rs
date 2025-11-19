@@ -16,11 +16,22 @@ use std::io::{self, Write};
 use std::net::IpAddr;
 use std::process;
 use std::collections::HashMap;
+use std::thread;
+use std::sync::mpsc::{channel, Sender};
 
 mod rtp_packet;
 mod rtp_stats;
 use crate::rtp_packet::RtpPacket;
 
+
+type PacketParams = (
+    u8,     // protocol: u8, 1 = UDP or 2 = TCP
+    IpAddr, // source_ip: IpAddr,
+    u16,    // source_port: u16, 
+    u16,    // sequence_number: u16,
+    usize,  // payload_size: usize,
+);   
+        
 
 fn get_interface_ips() -> HashMap<String, IpAddr> {
     let interfaces = datalink::interfaces();
@@ -41,19 +52,27 @@ fn get_interface_ips() -> HashMap<String, IpAddr> {
 }
 
 
-fn handle_udp_packet(source: IpAddr, destination: IpAddr, packet: &[u8]) {
+fn handle_udp_packet(source: IpAddr, _destination: IpAddr, packet: &[u8], ttx: &Sender<PacketParams>) {
     let udp = UdpPacket::new(packet);
 
     if let Some(udp) = udp {
         if let Some(rtp) = RtpPacket::new(&packet[8..]){ // UDP header is 8 bytes
-            println!("[udp]: {}:{} -> {}:{}", source, udp.get_source(), destination, udp.get_destination());  
-            println!("{:?}", rtp.header);
-
+            //println!("[udp]: {}:{} -> {}:{}", source, udp.get_source(), _destination, udp.get_destination());  
+            //println!("{:?}", rtp.header);
+            if let Err(e) = ttx.send((
+                1,
+                source,
+                udp.get_source(),
+                rtp.header.sequence_number,
+                rtp.header.payload_bytes,
+            )) {
+                eprintln!("Error sending packet params: {}", e);
+            }
         }
     }
 }
 
-fn handle_tcp_packet(source: IpAddr, destination: IpAddr, packet: &[u8]) {
+fn handle_tcp_packet(source: IpAddr, _destination: IpAddr, packet: &[u8], ttx: &Sender<PacketParams>) {
     let tcp = TcpPacket::new(packet);
     if let Some(tcp) = tcp { 
         let magic_numeric = 0x24; // RTP over TCP magic number
@@ -61,9 +80,17 @@ fn handle_tcp_packet(source: IpAddr, destination: IpAddr, packet: &[u8]) {
             return; 
         }     
         if let Some(rtp) = RtpPacket::new(&packet[4..]){ // TCP header is variable, but RTP over TCP usually uses 4-byte length prefix
-                println!("[tcp]: {}:{} -> {}:{}", source, tcp.get_source(), destination, tcp.get_destination());  
-                println!("{:?}", rtp.header);
-
+                //println!("[tcp]: {}:{} -> {}:{}", source, tcp.get_source(), destination, tcp.get_destination());  
+                //println!("{:?}", rtp.header);
+            if let Err(e) = ttx.send((
+                2,
+                source,
+                tcp.get_source(),
+                rtp.header.sequence_number,
+                rtp.header.payload_bytes,
+            )) {
+                eprintln!("Error sending packet params: {}", e); 
+            }   
         }
     } 
 }
@@ -73,20 +100,21 @@ fn handle_transport_protocol(
     destination: IpAddr,
     protocol: IpNextHeaderProtocol,
     packet: &[u8],
+    ttx: &Sender<PacketParams>,
 ) {
     match protocol {
         IpNextHeaderProtocols::Udp => {
-            handle_udp_packet(source, destination, packet)
+            handle_udp_packet(source, destination, packet, ttx)
         }
         IpNextHeaderProtocols::Tcp => {
-            handle_tcp_packet(source, destination, packet)
+            handle_tcp_packet(source, destination, packet, ttx)
         }
         
         _ => {}
     }
 }
 
-fn handle_ipv4_packet(ethernet: &EthernetPacket) {
+fn handle_ipv4_packet(ethernet: &EthernetPacket, ttx: &Sender<PacketParams>) {
     let header = Ipv4Packet::new(ethernet.payload());
     if let Some(header) = header {
         handle_transport_protocol(
@@ -94,15 +122,16 @@ fn handle_ipv4_packet(ethernet: &EthernetPacket) {
             IpAddr::V4(header.get_destination()),
             header.get_next_level_protocol(),
             header.payload(),
+            ttx,
         );
     }
 }
 
 
-fn handle_ethernet_frame(interface: &NetworkInterface, ethernet: &EthernetPacket) {
+fn handle_ethernet_frame(interface: &NetworkInterface, ethernet: &EthernetPacket, ttx: &Sender<PacketParams>) {
     let _interface_name = &interface.name[..];
     match ethernet.get_ethertype() {
-        EtherTypes::Ipv4 => handle_ipv4_packet(ethernet),
+        EtherTypes::Ipv4 => handle_ipv4_packet(ethernet, ttx),
         _ => {}
     }
 }
@@ -144,6 +173,39 @@ fn main() {
         .next()
         .unwrap_or_else(|| panic!("No such network interface: {}", iface_name));
 
+
+    // Create a channel to send on
+    let (ttx, rrx) = channel::<PacketParams>();
+
+    thread::spawn(move || {
+        let mut rtp_stats = rtp_stats::RtpStats::new();
+        let mut ts = chrono::Utc::now();
+        loop {
+            match rrx.recv() {
+                Ok((protocol, source_ip, source_port, sequence_number, payload_size)) => {
+                    rtp_stats.update_stats(
+                        protocol,
+                        source_ip,
+                        source_port,
+                        sequence_number,
+                        payload_size,
+                    );
+                    let now = chrono::Utc::now();
+                    if (now - ts).num_seconds() >= 3 {
+                        ts = now;
+                        rtp_stats.print();
+                    }
+
+                    // delete old entries every 30 seconds
+                    rtp_stats.clean_old_entries(30);
+                }
+                Err(e) => {
+                    eprintln!("Error receiving packet params: {}", e);
+                }
+            }
+        }
+    });
+
     // Create a channel to receive on
     let (_, mut rx) = match datalink::channel(&interface, Default::default()) {
         Ok(Ethernet(tx, rx)) => (tx, rx),
@@ -182,14 +244,14 @@ fn main() {
                             fake_ethernet_frame.set_source(MacAddr(0, 0, 0, 0, 0, 0));
                             fake_ethernet_frame.set_ethertype(EtherTypes::Ipv4);
                             fake_ethernet_frame.set_payload(&packet[payload_offset..]);
-                            handle_ethernet_frame(&interface, &fake_ethernet_frame.to_immutable());
+                            handle_ethernet_frame(&interface, &fake_ethernet_frame.to_immutable(), &ttx);
                             continue;
                         } else if version == 6 {
                             continue;
                         }
                     }
                 }
-                handle_ethernet_frame(&interface, &EthernetPacket::new(packet).unwrap());
+                handle_ethernet_frame(&interface, &EthernetPacket::new(packet).unwrap(), &ttx);
             }
             Err(e) => panic!("packetdump: unable to receive packet: {}", e),
         }

@@ -13,10 +13,11 @@ pub struct RtpHeader {
     pub timestamp: u32,
     pub ssrc: u32,
     pub csrc_list: Vec<u32>,
+    pub payload_bytes: usize,
 }
 
 impl RtpHeader {
-    pub fn parse(packet: &[u8]) -> Option<(RtpHeader, usize)> {
+    pub fn parse(packet: &[u8]) -> Option<RtpHeader> {
         if packet.len() < 12 {
             return None;
         }
@@ -34,6 +35,9 @@ impl RtpHeader {
         let sequence_number = u16::from_be_bytes([packet[2], packet[3]]);
         let timestamp = u32::from_be_bytes([packet[4], packet[5], packet[6], packet[7]]);
         let ssrc = u32::from_be_bytes([packet[8], packet[9], packet[10], packet[11]]);
+        if payload_type != 96 {
+            return None; // Only dynamic payload 96 are considered RTP here
+        }
 
         let mut offset: usize = 12;
         let mut csrc_list = Vec::new();
@@ -50,8 +54,9 @@ impl RtpHeader {
             csrc_list.push(c);
             offset += 4;
         }
+        let payload_bytes = packet.len() - offset;
 
-        Some((
+        Some(
             RtpHeader {
                 version,
                 padding,
@@ -63,22 +68,25 @@ impl RtpHeader {
                 timestamp,
                 ssrc,
                 csrc_list,
-            },
-            offset,
-        ))
+                payload_bytes,
+            }
+        )
     }
 }
 
 #[derive(Debug)]
 pub struct RtpPacket<'a> {
     pub header: RtpHeader,
+    
+    #[allow(dead_code)]
     pub payload: &'a [u8],
 }
 
 impl<'a> RtpPacket<'a> {
     pub fn new(packet: &'a [u8]) -> Option<RtpPacket<'a>> {
-        if let Some((header, offset)) = RtpHeader::parse(packet) {
-            if packet.len() < offset {
+        if let Some(header) = RtpHeader::parse(packet) {
+            let offset = packet.len() - header.payload_bytes;
+            if offset <= 0 {
                 return None;
             }
             let payload = &packet[offset..];
