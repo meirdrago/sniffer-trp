@@ -1,20 +1,30 @@
 
+use std::net::IpAddr;
+use std::collections::HashMap;
+use chrono::prelude::*;
+use prettytable::{Table, Row, Cell};
+
+const CLEAR_CODE: &str = "\x1B[2J"; 
+const MOVE_TO_TOP_LEFT: &str = "\x1B[H";
+
+
 #[derive(Debug, Clone)]
 pub struct RtpInfo {
     pub protocol: u8, // 1 = UDP or 2 = TCP
     pub source_ip: IpAddr,
     pub source_port: u16,
-    pub mut last_sequence: u16,
-    pub mut packet_count: u64,
-    pub mut payload_bytes: u64,
-    pub mut missed_packets: u64,
+    pub last_sequence: u16,
+    pub packet_count: u64,
+    pub payload_bytes: u64,
+    pub missed_packets: u64,
+    pub timestamp: DateTime<Utc>,
 }
 
 pub struct RtpStats {
     pub db: HashMap<u64, RtpInfo>,
 }
 
-Impl RtpStats {
+impl RtpStats {
     pub fn new() -> RtpStats {
         RtpStats {
             db: HashMap::new(),
@@ -50,6 +60,7 @@ Impl RtpStats {
             packet_count: 0,
             payload_bytes: 0,
             missed_packets: 0,
+            timestamp: Utc::now(),
         });
 
         // Update stats
@@ -61,11 +72,19 @@ Impl RtpStats {
         entry.payload_bytes += payload_size as u64;
     }
 
-    pub fn print_and_empty(&mut self) {
-        use prettytable::{Table, row, cell};
+    pub fn print(&mut self) {
+
 
         let mut table = Table::new();
-        table.add_row(row!["Protocol", "Source IP", "Source Port", "Packets", "Payload Bytes", "Missed Packets"]);
+        table.add_row(Row::new(vec![
+            Cell::new("Protocol").style_spec("FYb"),
+            Cell::new("Source IP").style_spec("FYb"),
+            Cell::new("Source Port").style_spec("FYb"),
+            Cell::new("Packets").style_spec("FYb"),
+            Cell::new("Payload Bytes").style_spec("FYb"),
+            Cell::new("Missed Packets").style_spec("FYb"),
+            Cell::new("Last Packet Time").style_spec("FYb"),  
+        ]));
 
         for (_key, info) in self.db.iter() {
             let protocol_str = match info.protocol {
@@ -73,22 +92,20 @@ Impl RtpStats {
                 2 => "TCP",
                 _ => "Unknown",
             };
-            table.add_row(row![
-                protocol_str,
-                info.source_ip,
-                info.source_port,
-                info.packet_count,
-                info.payload_bytes,
-                info.missed_packets
-            ]);
+            table.add_row(Row::new(vec![
+                Cell::new(protocol_str),
+                Cell::new(&info.source_ip.to_string()),
+                Cell::new(&info.source_port.to_string()),
+                Cell::new(&info.packet_count.to_string()),
+                Cell::new(&info.payload_bytes.to_string()),
+                Cell::new(&info.missed_packets.to_string()),
+                Cell::new(&info.timestamp.format("%Y-%m-%d %H:%M:%S").to_string()),
+            ]));
         }
 
         // Clear terminal and print table
         print!("{}{}", CLEAR_CODE, MOVE_TO_TOP_LEFT);
         table.printstd();
-
-        // Clear stats after printing
-        self.db.clear();
     }
 }
 

@@ -8,3 +8,4 @@ edition = "2021"
 [dependencies]
 pnet = "0.35"
 prettytable-rs = "0.10"
+chrono = { version = "0.4", features = ["serde"] }

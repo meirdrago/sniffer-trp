@@ -1,5 +1,6 @@
 // Simple RTP packet header and packet parser utilities
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct RtpHeader {
     pub version: u8,

@@ -1,18 +1,9 @@
+
 extern crate pnet;
-
-mod rtp_packet;
-mod rtp_stats;
-use crate::rtp_packet::{RtpHeader, RtpPacket};
-use crate::rtp_stats::{RtpInfo, RtpStats};
 use pnet::datalink::{self, NetworkInterface};
-
-use pnet::packet::arp::ArpPacket;
 use pnet::packet::ethernet::{EtherTypes, EthernetPacket, MutableEthernetPacket};
-use pnet::packet::icmp::{echo_reply, echo_request, IcmpPacket, IcmpTypes};
-use pnet::packet::icmpv6::Icmpv6Packet;
 use pnet::packet::ip::{IpNextHeaderProtocol, IpNextHeaderProtocols};
 use pnet::packet::ipv4::Ipv4Packet;
-use pnet::packet::ipv6::Ipv6Packet;
 use pnet::packet::tcp::TcpPacket;
 use pnet::packet::udp::UdpPacket;
 use pnet::packet::Packet;
@@ -26,9 +17,9 @@ use std::net::IpAddr;
 use std::process;
 use std::collections::HashMap;
 
-
-const CLEAR_CODE: &str = "\x1B[2J"; 
-const MOVE_TO_TOP_LEFT: &str = "\x1B[H";
+mod rtp_packet;
+mod rtp_stats;
+use crate::rtp_packet::RtpPacket;
 
 
 fn get_interface_ips() -> HashMap<String, IpAddr> {
@@ -50,7 +41,7 @@ fn get_interface_ips() -> HashMap<String, IpAddr> {
 }
 
 
-fn handle_udp_packet(interface_name: &str, source: IpAddr, destination: IpAddr, packet: &[u8]) {
+fn handle_udp_packet(source: IpAddr, destination: IpAddr, packet: &[u8]) {
     let udp = UdpPacket::new(packet);
 
     if let Some(udp) = udp {
@@ -62,7 +53,7 @@ fn handle_udp_packet(interface_name: &str, source: IpAddr, destination: IpAddr, 
     }
 }
 
-fn handle_tcp_packet(interface_name: &str, source: IpAddr, destination: IpAddr, packet: &[u8]) {
+fn handle_tcp_packet(source: IpAddr, destination: IpAddr, packet: &[u8]) {
     let tcp = TcpPacket::new(packet);
     if let Some(tcp) = tcp { 
         let magic_numeric = 0x24; // RTP over TCP magic number
@@ -78,7 +69,6 @@ fn handle_tcp_packet(interface_name: &str, source: IpAddr, destination: IpAddr, 
 }
 
 fn handle_transport_protocol(
-    interface_name: &str,
     source: IpAddr,
     destination: IpAddr,
     protocol: IpNextHeaderProtocol,
@@ -86,36 +76,33 @@ fn handle_transport_protocol(
 ) {
     match protocol {
         IpNextHeaderProtocols::Udp => {
-            handle_udp_packet(interface_name, source, destination, packet)
+            handle_udp_packet(source, destination, packet)
         }
         IpNextHeaderProtocols::Tcp => {
-            handle_tcp_packet(interface_name, source, destination, packet)
+            handle_tcp_packet(source, destination, packet)
         }
         
         _ => {}
     }
 }
 
-fn handle_ipv4_packet(interface_name: &str, ethernet: &EthernetPacket) {
+fn handle_ipv4_packet(ethernet: &EthernetPacket) {
     let header = Ipv4Packet::new(ethernet.payload());
     if let Some(header) = header {
         handle_transport_protocol(
-            interface_name,
             IpAddr::V4(header.get_source()),
             IpAddr::V4(header.get_destination()),
             header.get_next_level_protocol(),
             header.payload(),
         );
-    } else {
-        println!("[{}]: Malformed IPv4 Packet", interface_name);
     }
 }
 
 
 fn handle_ethernet_frame(interface: &NetworkInterface, ethernet: &EthernetPacket) {
-    let interface_name = &interface.name[..];
+    let _interface_name = &interface.name[..];
     match ethernet.get_ethertype() {
-        EtherTypes::Ipv4 => handle_ipv4_packet(interface_name, ethernet),
+        EtherTypes::Ipv4 => handle_ipv4_packet(ethernet),
         _ => {}
     }
 }
