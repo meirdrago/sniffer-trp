@@ -35,7 +35,8 @@ impl RtpHeader {
         let sequence_number = u16::from_be_bytes([packet[2], packet[3]]);
         let timestamp = u32::from_be_bytes([packet[4], packet[5], packet[6], packet[7]]);
         let ssrc = u32::from_be_bytes([packet[8], packet[9], packet[10], packet[11]]);
-        if payload_type != 96 {
+
+        if payload_type < 96 {
             return None; // Only dynamic payload 96 are considered RTP here
         }
 
@@ -55,6 +56,8 @@ impl RtpHeader {
             offset += 4;
         }
         let payload_bytes = packet.len() - offset;
+
+        //println!("RTP Packet: PT={}, payload_bytes={}", payload_type, payload_bytes);
 
         Some(
             RtpHeader {
@@ -94,5 +97,50 @@ impl<'a> RtpPacket<'a> {
         } else {
             None
         }
+    }
+}
+
+
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct InterleaveTcpRtp<'a> {
+    pub magic: u8,
+    pub channel: u8,
+    pub payload_langth: u16,
+    pub payload: &'a [u8],
+    pub next: Option<&'a [u8]>,
+}
+
+impl<'a> InterleaveTcpRtp<'a> {
+    pub fn parse(packet: &'a [u8]) -> Option<InterleaveTcpRtp<'a>> {
+        if packet.len() < 4 + 12 { // 4 bytes for interleave header + 12 bytes for RTP header
+            return None;
+        }
+        let magic = packet[0];
+        if magic != 0x24 {
+            return None;
+        }
+        let channel = packet[1];
+        let payload_langth = u16::from_be_bytes([packet[2], packet[3]]);
+        if packet.len() < 4 + payload_langth as usize {
+            return None;
+        }
+        let payload = &packet[4..4 + payload_langth as usize];
+
+        let next = if packet.len() > 4 +payload_langth as usize {
+            Some(&packet[4 + payload_langth as usize..])
+        } else {
+            None
+        };
+
+        Some(
+            InterleaveTcpRtp {
+                magic,
+                channel,
+                payload_langth,
+                payload,
+                next,
+            }
+        )
     }
 }

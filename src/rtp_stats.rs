@@ -1,11 +1,11 @@
 
 use std::net::IpAddr;
 use std::collections::HashMap;
+use std::io::{self, Write};
 use chrono::prelude::*;
 use prettytable::{Table, Row, Cell};
 
-const CLEAR_CODE: &str = "\x1B[2J"; 
-const MOVE_TO_TOP_LEFT: &str = "\x1B[H";
+const CLEAR_SCREEN_AND_MOVE_CURSOR: &str = "\x1bc";
 
 
 #[derive(Debug, Clone)]
@@ -16,6 +16,7 @@ pub struct RtpInfo {
     pub last_sequence: u16,
     pub packet_count: u64,
     pub payload_bytes: u64,
+    pub payload_type: u8,
     pub missed_packets: u64,
     pub timestamp: DateTime<Utc>,
 }
@@ -50,6 +51,7 @@ impl RtpStats {
         source_port: u16,
         sequence_number: u16,
         payload_size: usize,
+        payload_type: u8,
     ) {
         let key = RtpStats::create_key(protocol, &source_ip, source_port);
         let entry = self.db.entry(key).or_insert(RtpInfo {
@@ -59,6 +61,7 @@ impl RtpStats {
             last_sequence: sequence_number,
             packet_count: 0,
             payload_bytes: 0,
+            payload_type: payload_type,
             missed_packets: 0,
             timestamp: Utc::now(),
         });
@@ -79,7 +82,9 @@ impl RtpStats {
 
     pub fn print(&mut self) {
         let mut sorted_records: Vec<RtpInfo> = self.db.values().cloned().collect();
-        sorted_records.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        sorted_records.sort_by(|a, b| {
+            a.source_port.cmp(&b.source_port)
+        });
 
         let mut table = Table::new();
         table.add_row(Row::new(vec![
@@ -88,6 +93,7 @@ impl RtpStats {
             Cell::new("Source Port").style_spec("FYb"),
             Cell::new("Packets").style_spec("FYb"),
             Cell::new("Payload Bytes").style_spec("FYb"),
+            Cell::new("Payload Type").style_spec("FYb"),
             Cell::new("Missed Packets").style_spec("FYb"),
             Cell::new("Last Packet Time").style_spec("FYb"),  
         ]));
@@ -104,13 +110,14 @@ impl RtpStats {
                 Cell::new(&info.source_port.to_string()),
                 Cell::new(&info.packet_count.to_string()),
                 Cell::new(&info.payload_bytes.to_string()),
+                Cell::new(&info.payload_type.to_string()),
                 Cell::new(&info.missed_packets.to_string()),
                 Cell::new(&info.timestamp.format("%Y-%m-%d %H:%M:%S").to_string()),
             ]));
         }
 
-        // Clear terminal and print table
-        print!("{}{}", CLEAR_CODE, MOVE_TO_TOP_LEFT);
+        print!("{}", CLEAR_SCREEN_AND_MOVE_CURSOR);
+        io::stdout().flush().expect("Could not flush stdout");
         table.printstd();
     }
 

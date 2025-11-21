@@ -21,7 +21,7 @@ use std::sync::mpsc::{channel, Sender};
 
 mod rtp_packet;
 mod rtp_stats;
-use crate::rtp_packet::RtpPacket;
+use crate::rtp_packet::{InterleaveTcpRtp, RtpPacket};
 
 
 type PacketParams = (
@@ -30,6 +30,7 @@ type PacketParams = (
     u16,    // source_port: u16, 
     u16,    // sequence_number: u16,
     usize,  // payload_size: usize,
+    u8,     // payload_type: u8,
 );   
         
 
@@ -65,6 +66,7 @@ fn handle_udp_packet(source: IpAddr, _destination: IpAddr, packet: &[u8], ttx: &
                 udp.get_source(),
                 rtp.header.sequence_number,
                 rtp.header.payload_bytes,
+                rtp.header.payload_type,
             )) {
                 eprintln!("Error sending packet params: {}", e);
             }
@@ -75,23 +77,33 @@ fn handle_udp_packet(source: IpAddr, _destination: IpAddr, packet: &[u8], ttx: &
 fn handle_tcp_packet(source: IpAddr, _destination: IpAddr, packet: &[u8], ttx: &Sender<PacketParams>) {
     let tcp = TcpPacket::new(packet);
     if let Some(tcp) = tcp { 
-        let magic_numeric = 0x24; // RTP over TCP magic number
-        if packet.len() < 4 || packet[0] != magic_numeric {
-            return; 
-        }     
-        if let Some(rtp) = RtpPacket::new(&packet[4..]){ // TCP header is variable, but RTP over TCP usually uses 4-byte length prefix
-                //println!("[tcp]: {}:{} -> {}:{}", source, tcp.get_source(), destination, tcp.get_destination());  
-                //println!("{:?}", rtp.header);
-            if let Err(e) = ttx.send((
-                2,
-                source,
-                tcp.get_source(),
-                rtp.header.sequence_number,
-                rtp.header.payload_bytes,
-            )) {
-                eprintln!("Error sending packet params: {}", e); 
-            }   
+        let mut payload = tcp.payload();
+        loop{
+            if let Some(interleave) = InterleaveTcpRtp::parse(payload) {
+                if let Some(rtp) = RtpPacket::new(&interleave.payload) {
+                    if let Err(e) = ttx.send((
+                        2,
+                        source,
+                        tcp.get_source(),
+                        rtp.header.sequence_number,
+                        rtp.header.payload_bytes,
+                        rtp.header.payload_type,
+                    )) {
+                        eprintln!("Error sending packet params: {}", e);
+                    }
+                }
+                if let Some(next_payload) = interleave.next {
+                    payload = next_payload;
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
         }
+        
+ 
+
     } 
 }
 
@@ -138,7 +150,7 @@ fn handle_ethernet_frame(interface: &NetworkInterface, ethernet: &EthernetPacket
 
 fn print_usage_and_exit() {
     let interfaces = get_interface_ips();
-    writeln!(io::stderr(), "USAGE: sniff-rtp <NETWORK INTERFACE>").unwrap();
+    writeln!(io::stderr(), "USAGE: sniff-rtp <NETWORK INTERFACE> [FILERED IPS (comma separated)]").unwrap();
     println!("Available interfaces and their IP addresses:");
     let ifaces_vec: Vec<Vec<String>> = interfaces
             .iter()
@@ -163,6 +175,23 @@ fn main() {
         }
     };
     
+    let filter_ips: Vec<IpAddr> = match env::args().nth(2) {
+        Some(ips_str) => {
+            ips_str
+                .split(',')
+                .filter_map(|ip_str| match ip_str.parse::<IpAddr>() {
+                    Ok(ip) => Some(ip),
+                    Err(_) => {
+                        eprintln!("Invalid IP address provided for filtering: {}", ip_str);
+                        process::exit(1);
+                    }
+                })
+                .collect()
+        },
+        None => Vec::new(),
+    };
+    
+
     let interface_names_match = |iface: &NetworkInterface| iface.name == iface_name;
 
     // Find the network interface with the provided name
@@ -171,7 +200,11 @@ fn main() {
         .into_iter()
         .filter(interface_names_match)
         .next()
-        .unwrap_or_else(|| panic!("No such network interface: {}", iface_name));
+        .unwrap_or_else(|| {
+            println!("No such network interface: {}", iface_name);
+            print_usage_and_exit();
+            process::exit(1);
+        });
 
 
     // Create a channel to send on
@@ -182,13 +215,17 @@ fn main() {
         let mut ts = chrono::Utc::now();
         loop {
             match rrx.recv() {
-                Ok((protocol, source_ip, source_port, sequence_number, payload_size)) => {
+                Ok((protocol, source_ip, source_port, sequence_number, payload_size, payload_type)) => {
+                    if filter_ips.len() > 0 && !filter_ips.contains(&source_ip) {
+                        continue;
+                    }
                     rtp_stats.update_stats(
                         protocol,
                         source_ip,
                         source_port,
                         sequence_number,
                         payload_size,
+                        payload_type,
                     );
                     let now = chrono::Utc::now();
                     if (now - ts).num_seconds() >= 3 {
