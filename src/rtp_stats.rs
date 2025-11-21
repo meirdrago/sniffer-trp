@@ -33,7 +33,7 @@ impl RtpStats {
     }
 
     fn create_key(
-        protocol: u8,
+        payload_type: u8,
         source_ip: &IpAddr,
         source_port: u16,
     ) -> u64 {
@@ -41,7 +41,7 @@ impl RtpStats {
             IpAddr::V4(ipv4) => u32::from_be_bytes(ipv4.octets()) as u64,
             IpAddr::V6(_) => 0, // no ipv6 support for now
         };
-        (protocol as u64) << 48 | (ip_numeric << 16) | (source_port as u64)
+        (payload_type as u64) << 48 | (ip_numeric << 16) | (source_port as u64)
     }
 
     pub fn update_stats(
@@ -53,7 +53,7 @@ impl RtpStats {
         payload_size: usize,
         payload_type: u8,
     ) {
-        let key = RtpStats::create_key(protocol, &source_ip, source_port);
+        let key = RtpStats::create_key(payload_type, &source_ip, source_port);
         let entry = self.db.entry(key).or_insert(RtpInfo {
             protocol,
             source_ip: source_ip.clone(),
@@ -72,6 +72,15 @@ impl RtpStats {
             entry.last_sequence = sequence_number;
            
         } else if seq_diff > 1 {
+            /*
+            println!(
+                "Missed {} packets from {}:{} (PT={})",
+                seq_diff - 1,
+                source_ip,
+                source_port,
+                payload_type
+            );
+            */
             entry.missed_packets += (seq_diff - 1) as u64;
         }
         entry.last_sequence = sequence_number;
@@ -93,9 +102,10 @@ impl RtpStats {
             Cell::new("Source Port").style_spec("FYb"),
             Cell::new("Packets").style_spec("FYb"),
             Cell::new("Payload Bytes").style_spec("FYb"),
-            Cell::new("Payload Type").style_spec("FYb"),
+            Cell::new("PT").style_spec("FYb"),
             Cell::new("Missed Packets").style_spec("FYb"),
-            Cell::new("Last Packet Time").style_spec("FYb"),  
+            Cell::new("Packet Time").style_spec("FYb"),
+            Cell::new("Last Seq").style_spec("FYb"),  
         ]));
 
         for info in sorted_records {
@@ -113,6 +123,7 @@ impl RtpStats {
                 Cell::new(&info.payload_type.to_string()),
                 Cell::new(&info.missed_packets.to_string()),
                 Cell::new(&info.timestamp.format("%Y-%m-%d %H:%M:%S").to_string()),
+                Cell::new(&info.last_sequence.to_string()),
             ]));
         }
 

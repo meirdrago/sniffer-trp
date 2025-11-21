@@ -78,8 +78,13 @@ fn handle_tcp_packet(source: IpAddr, _destination: IpAddr, packet: &[u8], ttx: &
     let tcp = TcpPacket::new(packet);
     if let Some(tcp) = tcp { 
         let mut payload = tcp.payload();
+        //let mut interleave_seq = 0;
+
         loop{
             if let Some(interleave) = InterleaveTcpRtp::parse(payload) {
+                //interleave_seq += 1;
+                //println!("[{}]  channel: {}, packet_len: {}, payload_len: {}, has_next: {}", 
+                //    interleave_seq, interleave.channel, packet.len(), interleave.payload_len, interleave.next.is_some());
                 if let Some(rtp) = RtpPacket::new(&interleave.payload) {
                     if let Err(e) = ttx.send((
                         2,
@@ -91,6 +96,7 @@ fn handle_tcp_packet(source: IpAddr, _destination: IpAddr, packet: &[u8], ttx: &
                     )) {
                         eprintln!("Error sending packet params: {}", e);
                     }
+                    //println!("seq: {}, len: {}, pt: {}", rtp.header.sequence_number, rtp.header.payload_bytes, rtp.header.payload_type);
                 }
                 if let Some(next_payload) = interleave.next {
                     payload = next_payload;
@@ -101,9 +107,6 @@ fn handle_tcp_packet(source: IpAddr, _destination: IpAddr, packet: &[u8], ttx: &
                 break;
             }
         }
-        
- 
-
     } 
 }
 
