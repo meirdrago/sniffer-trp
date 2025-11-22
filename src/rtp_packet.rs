@@ -104,11 +104,10 @@ impl<'a> RtpPacket<'a> {
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct InterleaveTcpRtp<'a> {
-    pub magic: u8,
+    pub magic: bool,
     pub channel: u8,
     pub payload_len: u16,
     pub payload: &'a [u8],
-    pub next: Option<&'a [u8]>,
 }
 
 impl<'a> InterleaveTcpRtp<'a> {
@@ -116,10 +115,7 @@ impl<'a> InterleaveTcpRtp<'a> {
         if packet.len() < 4 + 12 { // 4 bytes for interleave header + 12 bytes for RTP header
             return None;
         }
-        let magic = packet[0];
-        if magic != 0x24 {
-            return None;
-        }
+        let magic = if packet[0] == 0x24 { true } else { false };
         let channel = packet[1];
         let mut payload_len = u16::from_be_bytes([packet[2], packet[3]]);
         if packet.len() < 4 + payload_len as usize {
@@ -127,19 +123,12 @@ impl<'a> InterleaveTcpRtp<'a> {
         }
         let payload = &packet[4..4 + payload_len as usize];
 
-        let next = if packet.len() > 4 +payload_len as usize {
-            Some(&packet[4 + payload_len as usize..])
-        } else {
-            None
-        };
-
         Some(
             InterleaveTcpRtp {
                 magic,
                 channel,
                 payload_len,
                 payload,
-                next,
             }
         )
     }

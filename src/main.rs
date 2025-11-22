@@ -78,34 +78,45 @@ fn handle_tcp_packet(source: IpAddr, _destination: IpAddr, packet: &[u8], ttx: &
     let tcp = TcpPacket::new(packet);
     if let Some(tcp) = tcp { 
         let mut payload = tcp.payload();
-        //let mut interleave_seq = 0;
+        let mut interleave_seq = 0;
+
+        println!("[tcp]: {}:{} -> {}:{} ({})", 
+            source, tcp.get_source(), _destination, tcp.get_destination(), payload.len());   
 
         loop{
+            interleave_seq += 1;
+            
             if let Some(interleave) = InterleaveTcpRtp::parse(payload) {
-                //interleave_seq += 1;
-                //println!("[{}]  channel: {}, packet_len: {}, payload_len: {}, has_next: {}", 
-                //    interleave_seq, interleave.channel, packet.len(), interleave.payload_len, interleave.next.is_some());
-                if let Some(rtp) = RtpPacket::new(&interleave.payload) {
-                    if let Err(e) = ttx.send((
-                        2,
-                        source,
-                        tcp.get_source(),
-                        rtp.header.sequence_number,
-                        rtp.header.payload_bytes,
-                        rtp.header.payload_type,
-                    )) {
-                        eprintln!("Error sending packet params: {}", e);
+                println!("[{}]  channel: {}, packet_len: {}, payload_len: {}", 
+                    interleave_seq, interleave.channel, packet.len(), interleave.payload_len);
+                if interleave.magic == true {
+                    
+                    if let Some(rtp) = RtpPacket::new(&interleave.payload) {
+                        if let Err(e) = ttx.send((
+                            2,
+                            source,
+                            tcp.get_source(),
+                            rtp.header.sequence_number,
+                            rtp.header.payload_bytes,
+                            rtp.header.payload_type,
+                        )) {
+                            eprintln!("Error sending packet params: {}", e);
+                        }
+                        println!("seq: {}, len: {}, pt: {}", rtp.header.sequence_number, rtp.header.payload_bytes, rtp.header.payload_type);
                     }
-                    //println!("seq: {}, len: {}, pt: {}", rtp.header.sequence_number, rtp.header.payload_bytes, rtp.header.payload_type);
                 }
-                if let Some(next_payload) = interleave.next {
-                    payload = next_payload;
+                
+                let offset = interleave.payload_len as usize + 4;
+                if payload.len() > offset {
+                    payload = &payload[offset..];
                 } else {
                     break;
-                }
-            } else {
+                }  
+                
+            }else{
+                println!("Not interleaved packet");
                 break;
-            }
+            }       
         }
     } 
 }
@@ -129,24 +140,30 @@ fn handle_transport_protocol(
     }
 }
 
-fn handle_ipv4_packet(ethernet: &EthernetPacket, ttx: &Sender<PacketParams>) {
+fn handle_ipv4_packet(ethernet: &EthernetPacket,
+        ttx: &Sender<PacketParams>, filter_ips: &Vec<IpAddr>) {
     let header = Ipv4Packet::new(ethernet.payload());
+    
     if let Some(header) = header {
-        handle_transport_protocol(
-            IpAddr::V4(header.get_source()),
-            IpAddr::V4(header.get_destination()),
-            header.get_next_level_protocol(),
-            header.payload(),
-            ttx,
-        );
+        let dest_ip = IpAddr::V4(header.get_destination());
+        if filter_ips.len() == 0 || !filter_ips.contains(&dest_ip) {
+            handle_transport_protocol(
+                IpAddr::V4(header.get_source()),
+                IpAddr::V4(header.get_destination()),
+                header.get_next_level_protocol(),
+                header.payload(),
+                ttx,
+            );
+        }
     }
 }
 
 
-fn handle_ethernet_frame(interface: &NetworkInterface, ethernet: &EthernetPacket, ttx: &Sender<PacketParams>) {
+fn handle_ethernet_frame(interface: &NetworkInterface,
+        ethernet: &EthernetPacket, ttx: &Sender<PacketParams>, filter_ips: &Vec<IpAddr>) {
     let _interface_name = &interface.name[..];
     match ethernet.get_ethertype() {
-        EtherTypes::Ipv4 => handle_ipv4_packet(ethernet, ttx),
+        EtherTypes::Ipv4 => handle_ipv4_packet(ethernet, ttx, filter_ips),
         _ => {}
     }
 }
@@ -219,9 +236,9 @@ fn main() {
         loop {
             match rrx.recv() {
                 Ok((protocol, source_ip, source_port, sequence_number, payload_size, payload_type)) => {
-                    if filter_ips.len() > 0 && !filter_ips.contains(&source_ip) {
-                        continue;
-                    }
+                    //if filter_ips.len() > 0 && !filter_ips.contains(&source_ip) {
+                    //    continue;
+                    //}
                     rtp_stats.update_stats(
                         protocol,
                         source_ip,
@@ -284,14 +301,14 @@ fn main() {
                             fake_ethernet_frame.set_source(MacAddr(0, 0, 0, 0, 0, 0));
                             fake_ethernet_frame.set_ethertype(EtherTypes::Ipv4);
                             fake_ethernet_frame.set_payload(&packet[payload_offset..]);
-                            handle_ethernet_frame(&interface, &fake_ethernet_frame.to_immutable(), &ttx);
+                            handle_ethernet_frame(&interface, &fake_ethernet_frame.to_immutable(), &ttx, &filter_ips);
                             continue;
                         } else if version == 6 {
                             continue;
                         }
                     }
                 }
-                handle_ethernet_frame(&interface, &EthernetPacket::new(packet).unwrap(), &ttx);
+                handle_ethernet_frame(&interface, &EthernetPacket::new(packet).unwrap(), &ttx, &filter_ips);
             }
             Err(e) => panic!("packetdump: unable to receive packet: {}", e),
         }
