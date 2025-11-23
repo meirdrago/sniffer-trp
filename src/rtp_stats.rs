@@ -72,7 +72,7 @@ impl RtpStats {
             entry.last_sequence = sequence_number;
            
         } else if seq_diff > 1 {
-            println!("Missed {} packets from {}:{}", seq_diff - 1, source_ip, source_port);
+            //println!("Missed {} packets from {}:{}", seq_diff - 1, source_ip, source_port);
             entry.missed_packets += (seq_diff - 1) as u64;
         }
         entry.last_sequence = sequence_number;
@@ -82,7 +82,6 @@ impl RtpStats {
     }
 
     pub fn print(&mut self) {
-        return;
         let mut sorted_records: Vec<RtpInfo> = self.db.values().cloned().collect();
         sorted_records.sort_by(|a, b| {
             a.source_port.cmp(&b.source_port)
