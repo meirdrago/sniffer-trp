@@ -80,12 +80,14 @@ fn handle_tcp_packet(source: IpAddr, _destination: IpAddr, packet: &[u8], ttx: &
         let mut payload = tcp.payload();
         let mut interleave_seq = 0;
         
-        let mut arr: Vec<(usize, u16)> = Vec::new();
+        let mut arr: Vec<(usize, u16, u16, bool)> = Vec::new();
         if payload.len() > 8 {
             for i in 0..payload.len() - 8 {
-                if payload[i] == 0x24 && (payload[i+4] >> 6) & 0x03 == 2 && payload[i+5] & 0x7f == 96{
+                if payload[i] == 0x24 && (payload[i+4] >> 6) & 0x03 == 2 {
                     let seq = u16::from_be_bytes([payload[i+6], payload[i+7]]);
-                    arr.push((i, seq));
+                    let is96 = payload[i+5] & 0x7f == 96;
+                    let plen = u16::from_be_bytes([payload[i+2], payload[i+3]]);
+                    arr.push((i, plen, seq, is96));
                 }
             }
         }
@@ -125,11 +127,11 @@ fn handle_tcp_packet(source: IpAddr, _destination: IpAddr, packet: &[u8], ttx: &
 
         if interleave_seq == 1 && payload.len() > 16 {
             // try parsing as RTP directly going back
-            let start = payload.len() - 16;
-            let range = 400;
-            let end = if payload.len() > range {payload.len() - range} else {0};
-            for i in (end..=start).rev() {
-                let buffer = &payload[i..];
+            let mut buffer = &payload[..];
+            loop {
+                if buffer.len() < 16 {
+                    break;
+                }
                 if let Some(interleave) = InterleaveTcpRtp::parse(buffer) {
                     if let Some(rtp) = RtpPacket::new(&interleave.payload) {
                         //println!("OK [{}] {} {}", i, rtp.header.sequence_number, rtp.header.payload_type); 
@@ -145,8 +147,15 @@ fn handle_tcp_packet(source: IpAddr, _destination: IpAddr, packet: &[u8], ttx: &
                         )) {
                             eprintln!("Error sending packet params: {}", e);
                         }
+                    }
+                    let offset = interleave.payload_len as usize + 4;
+                    if buffer.len() > offset {
+                        buffer = &buffer[offset..];
+                    } else {
                         break;
                     }
+                }else {
+                    buffer = &buffer[4..];
                 }
             }
         }
