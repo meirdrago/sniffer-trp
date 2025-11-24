@@ -70,9 +70,11 @@ impl RtpStats {
         let seq_diff: i64 = sequence_number as i64 - entry.last_sequence as i64;
         if seq_diff < -1000 { // new sequence counter wrapped around
             entry.last_sequence = sequence_number;
-           
+        
+        } else if seq_diff > 1000 { // old packet, ignore
+            return
         } else if seq_diff > 1 {
-            //println!("Missed {} packets from {}:{}", seq_diff - 1, source_ip, source_port);
+            println!("Missed {} packets from {}:{}", seq_diff - 1, source_ip, source_port);
             entry.missed_packets += (seq_diff - 1) as u64;
         }
         entry.last_sequence = sequence_number;

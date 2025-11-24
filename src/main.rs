@@ -78,42 +78,37 @@ fn handle_tcp_packet(source: IpAddr, _destination: IpAddr, packet: &[u8], ttx: &
     let tcp = TcpPacket::new(packet);
     if let Some(tcp) = tcp { 
         let mut payload = tcp.payload();
-        
-        /*
         let mut interleave_seq = 0;
-        let mut arr: Vec<usize> = Vec::new();
-        if payload.len() > 5 {
-            for i in 0..payload.len() - 5 {
-                if payload[i] == 0x24 && (payload[i+4] >> 6) & 0x03 == 2 && payload[i+5] & 0x7f == 35{
-                    arr.push(i);
+        
+        let mut arr: Vec<(usize, u16)> = Vec::new();
+        if payload.len() > 8 {
+            for i in 0..payload.len() - 8 {
+                if payload[i] == 0x24 && (payload[i+4] >> 6) & 0x03 == 2 && payload[i+5] & 0x7f == 96{
+                    let seq = u16::from_be_bytes([payload[i+6], payload[i+7]]);
+                    arr.push((i, seq));
                 }
             }
         }
-
+        
         println!("len: {}, interleaves rtp at: {:?}", payload.len(), arr);  
-        */
 
         loop{
-            //interleave_seq += 1;
+            interleave_seq += 1;
             
             if let Some(interleave) = InterleaveTcpRtp::parse(payload) {
-                //println!("[{}]  channel: {}, packet_len: {}, payload_len: {}", 
-                //    interleave_seq, interleave.channel, packet.len(), interleave.payload_len);
-                if interleave.magic == true {
-                    
-                    if let Some(rtp) = RtpPacket::new(&interleave.payload) {
-                        if let Err(e) = ttx.send((
-                            2,
-                            source,
-                            tcp.get_source(),
-                            rtp.header.sequence_number,
-                            rtp.header.payload_bytes,
-                            rtp.header.payload_type,
-                        )) {
-                            eprintln!("Error sending packet params: {}", e);
-                        }
-                        //println!("seq: {}, len: {}, pt: {}", rtp.header.sequence_number, rtp.header.payload_bytes, rtp.header.payload_type);
+                if let Some(rtp) = RtpPacket::new(&interleave.payload) {
+                    if let Err(e) = ttx.send((
+                        2,
+                        source,
+                        tcp.get_source(),
+                        rtp.header.sequence_number,
+                        rtp.header.payload_bytes,
+                        rtp.header.payload_type,
+                    )) {
+                        eprintln!("Error sending packet params: {}", e);
                     }
+                    println!("[{}, {}] seq: {}, len: {}, pt: {}", 
+                        tcp.payload().len(), interleave_seq, rtp.header.sequence_number, rtp.header.payload_bytes, rtp.header.payload_type);
                 }
                 
                 let offset = interleave.payload_len as usize + 4;
@@ -126,6 +121,34 @@ fn handle_tcp_packet(source: IpAddr, _destination: IpAddr, packet: &[u8], ttx: &
             }else{
                 break;
             }       
+        }
+
+        if interleave_seq == 1 && payload.len() > 16 {
+            // try parsing as RTP directly going back
+            let start = payload.len() - 16;
+            let range = 400;
+            let end = if payload.len() > range {payload.len() - range} else {0};
+            for i in (end..=start).rev() {
+                let buffer = &payload[i..];
+                if let Some(interleave) = InterleaveTcpRtp::parse(buffer) {
+                    if let Some(rtp) = RtpPacket::new(&interleave.payload) {
+                        //println!("OK [{}] {} {}", i, rtp.header.sequence_number, rtp.header.payload_type); 
+                        println!("OK [{}, {}] seq: {}, len: {}, pt: {}", 
+                            tcp.payload().len(), interleave_seq, rtp.header.sequence_number, rtp.header.payload_bytes, rtp.header.payload_type);
+                        if let Err(e) = ttx.send((
+                            2,
+                            source,
+                            tcp.get_source(),
+                            rtp.header.sequence_number,
+                            rtp.header.payload_bytes,
+                            rtp.header.payload_type,
+                        )) {
+                            eprintln!("Error sending packet params: {}", e);
+                        }
+                        break;
+                    }
+                }
+            }
         }
     } 
 }
@@ -256,7 +279,7 @@ fn main() {
                     let now = chrono::Utc::now();
                     if (now - ts).num_seconds() >= 3 {
                         ts = now;
-                        rtp_stats.print();
+                        //rtp_stats.print();
                     }
 
                     // delete old entries every 30 seconds
